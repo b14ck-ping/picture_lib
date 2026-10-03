@@ -7,6 +7,7 @@
 #include "jpg_common.h"
 #include "bmp_codec.h"
 #include "DCT_coefficients.h"
+#include "jpg_bitflow.h"
 #include <stdarg.h>
 
 
@@ -43,7 +44,7 @@ static handlers_table_item_t s_block_handlers[] = {
 
 typedef enum {CHANNEL_Y = 1, CHANNEL_Cb, CHANNEL_Cr} channel_name_t;
 typedef enum {COEFF_NAME_DC = 0, COEFF_NAME_AC} coeff_name_t;
-static bool log_enabled = false;
+static bool log_enabled = true;
 static void log_str(const char* format_str, ...)
 {
     if (!log_enabled)
@@ -351,7 +352,7 @@ int jpg_codec_file_decode(FILE *jpg_file, void **out_pixel_array)
             int l_size = fread (b_encoded_data, sizeof(uint8_t), remain_size, jpg_file);
             for (int i = 0; i < remain_size - 1; i++){
                 if (b_encoded_data[i+1] == 0xD9 && b_encoded_data[i] == 0xFF){
-                    remain_size = (i-1) * sizeof(uint8_t);
+                    remain_size = i * sizeof(uint8_t);
                     b_encoded_data = realloc(b_encoded_data, remain_size);
                     jpg_param.encoded_data = b_encoded_data;
                     jpg_param.encoded_data_size = remain_size;
@@ -414,15 +415,17 @@ int jpg_codec_file_decode(FILE *jpg_file, void **out_pixel_array)
 
     jpg_codec_jpg_param_remove(&jpg_param);
 
-    for (size_t i =0; i < jpg_decode_params.encoded_data_size; i++){
-        char str[9] = {};
-        print_binary_8bit(jpg_decode_params.encoded_data[i] , str);
-        log_str("%s|", str);
-    }
-    log_str("\n");
+    // for (size_t i =0; i < jpg_decode_params.encoded_data_size; i++){
+    //     char str[9] = {};
+    //     print_binary_8bit(jpg_decode_params.encoded_data[i] , str);
+    //     log_str("%s|", str);
+    // }
+    // log_str("\n");
 
     int** zigzag_matrixes = NULL;
     int matrix_cnt = decode_data_flow(&jpg_decode_params, &zigzag_matrixes);
+    if (matrix_cnt < 1)
+        return matrix_cnt;
 
     int ***matrix = calloc(matrix_cnt, sizeof(int **));
     for(int i = 0; i < matrix_cnt; i++){
@@ -757,7 +760,7 @@ static int chunk_handler_comment(jpg_file_params_t *jpg_param, void* data, uint1
 
 static huffman_tree_t *s_get_dht(huffman_tree_t** huffman_trees, int huffman_trees_cnt, coeff_name_t current_coeff, uint8_t tree_id)
 {
-    log_str("Search table with id = %d and tree class = %d\n", tree_id, current_coeff);
+    // log_str("Search table with id = %d and tree class = %d\n", tree_id, current_coeff);
     for (int i = 0; i < huffman_trees_cnt; i++){
         if ((huffman_trees[i]->id == tree_id) && (huffman_trees[i]->tree_class == (uint8_t)current_coeff)){
             return huffman_trees[i];
@@ -769,6 +772,7 @@ static huffman_tree_t *s_get_dht(huffman_tree_t** huffman_trees, int huffman_tre
 
 static int decode_data_flow(jpg_decoding_params_t *decoding_param, int*** zigzag_matrix)
 {
+    int ret_code = 0;
     int** l_zigzag_matrixes = (int**)calloc(1, sizeof(int*));
     l_zigzag_matrixes[0] = (int*)calloc(64, sizeof(int));
     size_t current_l_zigzag_matrix_cnt = 0;
@@ -779,42 +783,104 @@ static int decode_data_flow(jpg_decoding_params_t *decoding_param, int*** zigzag
                                  [CHANNEL_Cr-1] = decoding_param->sof0->channels[CHANNEL_Cr-1].h_thinning * decoding_param->sof0->channels[CHANNEL_Cr-1].v_thinning};
 
     coeff_name_t current_coeff = COEFF_NAME_DC;
-    coeff_name_t current_channel = CHANNEL_Y;
-    coeff_name_t current_channel_cnt = 0;
+    channel_name_t current_channel = CHANNEL_Y;
+    int current_channel_cnt = 0;
 
     huffman_tree_t *huffman_tree_current = s_get_dht(decoding_param->huffman_trees, decoding_param->huffman_trees_cnt, 
                                                      current_coeff, decoding_param->sos->channels[(uint8_t)current_channel-1].huffman_table_dc_id);
     tree_node_t *current_node = huffman_tree_current->tree;
     uint8_t current_value = 0;
-    for (size_t i = 0; i < decoding_param->encoded_data_size; i++){
-        if (i > 0 && decoding_param->encoded_data[i] == 0x00 && decoding_param->encoded_data[i-1] == 0xFF)
-            i++;
-        for (int j = 7; j >= 0; j--){
-            current_node = (decoding_param->encoded_data[i] & (0x01 << j)) ? (current_node->right/* ? current_node->right : current_node*/ ) : (current_node->left/*? current_node->left : current_node */);
-            log_str("Byte cnt = %d, bit cnt = %d, bit value = %u\n", i, 7-j, (decoding_param->encoded_data[i] & (0x01 << j)) ? 1 : 0);
-            if (current_node && !current_node->leaf_node){
-                continue;   
-            } else if (!current_node){
-                log_str("Error node! Tree class: %d, tree id = %d. Byte idx = %lu, bit idx = %d.\n",
-                                                    huffman_tree_current->tree_class, huffman_tree_current->id, i, 7 - j);
-                return 0;
+
+    struct jpg_bitflow_t* bf = jpg_bitflow_allocate(decoding_param->encoded_data, decoding_param->encoded_data_size);
+    if (!bf){
+        log_str("Memory allocation error\n");
+        return -1;
+    }
+
+    for (;;){
+        if (current_node && !current_node->leaf_node){
+            int curr_bit = false;
+            ret_code = jpg_bitflow_get_next_bit(bf, &curr_bit);
+            if (ret_code == JPG_BITFLOW_END_OF_FLOW)
+                break;
+
+            if (ret_code != JPG_BITFLOW_RET_OK)
+                goto ret_error;
+
+            current_node = curr_bit ? (current_node->right) : (current_node->left);
+            if (!current_node){
+                ret_code = -100;
+                goto ret_error;
             }
-            log_str("Found value: 0x%x\n", current_node->value);
-            if(current_node->value == 0){
-                if (current_coeff == COEFF_NAME_DC){
-                    l_zigzag_matrixes[current_l_zigzag_matrix_cnt][b_zigzag_pos] = 0;
-                    log_str("dc coeff_value = 0\n");
-                    b_zigzag_pos++;
-                    current_coeff = COEFF_NAME_AC;
-                    uint8_t tree_id = decoding_param->sos->channels[(uint8_t)current_channel-1].huffman_table_ac_id;
-                    huffman_tree_current = s_get_dht(decoding_param->huffman_trees, decoding_param->huffman_trees_cnt, 
-                                                        current_coeff, tree_id);
-                    current_node = huffman_tree_current->tree;   
-                }  else {
-                    log_str("set next ac coeff_value = 0\n");
+            continue;
+        } 
+
+        if(current_node->value == 0){
+            if (current_coeff == COEFF_NAME_DC){
+                l_zigzag_matrixes[current_l_zigzag_matrix_cnt][b_zigzag_pos] = 0;
+                // log_str("dc coeff_value = 0\n");
+                b_zigzag_pos++;
+                current_coeff = COEFF_NAME_AC;
+                uint8_t tree_id = decoding_param->sos->channels[(uint8_t)current_channel-1].huffman_table_ac_id;
+                huffman_tree_current = s_get_dht(decoding_param->huffman_trees, decoding_param->huffman_trees_cnt, 
+                                                    current_coeff, tree_id);
+                current_node = huffman_tree_current->tree;   
+            }  else {
+                // log_str("set next ac coeff_value = 0\n");
+                current_l_zigzag_matrix_cnt++;
+                b_zigzag_pos = 0;
+                l_zigzag_matrixes = (int**)realloc(l_zigzag_matrixes, (current_l_zigzag_matrix_cnt + 1) * sizeof(int*));
+                l_zigzag_matrixes[current_l_zigzag_matrix_cnt] = (int*)calloc(64, sizeof(int));
+                current_coeff = COEFF_NAME_DC;
+                current_channel_cnt++;
+                if (current_channel_cnt >= b_channels_cnt[current_channel-1]){
+                    current_channel++;
+                    if(current_channel > CHANNEL_Cr){
+                        current_channel = CHANNEL_Y;
+                        current_channel_cnt = 0;
+                    }
+                }
+                // log_str("Set channel = %d\n", current_channel);
+                uint8_t tree_id = decoding_param->sos->channels[(uint8_t)current_channel-1].huffman_table_dc_id;
+                huffman_tree_current = s_get_dht(decoding_param->huffman_trees, decoding_param->huffman_trees_cnt, 
+                                                    current_coeff, tree_id);
+                current_node = huffman_tree_current->tree; 
+            }                                
+        } else {
+            if (current_coeff == COEFF_NAME_DC){
+                int64_t coeff_value = 0;
+                if((ret_code = jpg_bitflow_get_next_i64_bits(bf, &coeff_value, current_node->value)) != JPG_BITFLOW_RET_OK)
+                    goto ret_error;
+                // log_str("dc coeff_value = %d\n", coeff_value);
+                l_zigzag_matrixes[current_l_zigzag_matrix_cnt][b_zigzag_pos] = (coeff_value & (1 << (current_node->value-1))) ? coeff_value : coeff_value - s_pow_2(current_node->value) + 1;
+                b_zigzag_pos++;
+                current_coeff = COEFF_NAME_AC;
+                uint8_t tree_id = decoding_param->sos->channels[(uint8_t)current_channel-1].huffman_table_ac_id;
+                huffman_tree_current = s_get_dht(decoding_param->huffman_trees, decoding_param->huffman_trees_cnt, 
+                                                    current_coeff, tree_id);
+                current_node = huffman_tree_current->tree; 
+            } else {
+                int64_t coeff_value = 0;
+                uint8_t zero_cnt = (current_node->value & 0xF0) >> 4;
+                uint16_t coef_lng = (current_node->value & 0x0F);
+                b_zigzag_pos += zero_cnt;
+                // if (zero_cnt) log_str("skip %d ac coeff remain zero.\n", zero_cnt);
+                if (b_zigzag_pos <= 63){
+                    if((ret_code = jpg_bitflow_get_next_i64_bits(bf, &coeff_value, coef_lng)) != JPG_BITFLOW_RET_OK)
+                        goto ret_error;
+                    
+                    // log_str("ac coeff_value = %d, coef_lng = %u\n", coeff_value, (unsigned short)coef_lng);
+                    // if (coeff_value){
+                        l_zigzag_matrixes[current_l_zigzag_matrix_cnt][b_zigzag_pos] = coeff_value ? (coeff_value & (1 << (coef_lng-1))) ? coeff_value : coeff_value + 1 - s_pow_2(coef_lng) : 0;
+                        // log_str("ac coeff_value after transforming = %d\n", l_zigzag_matrixes[current_l_zigzag_matrix_cnt][b_zigzag_pos]);
+                        b_zigzag_pos++;
+                    // }
+                }
+                if (b_zigzag_pos > 63){
+                    // log_str("end of matrix\n");
                     current_l_zigzag_matrix_cnt++;
                     b_zigzag_pos = 0;
-                    l_zigzag_matrixes = (int**)realloc(l_zigzag_matrixes, (current_l_zigzag_matrix_cnt + 1) * sizeof(int*));
+                    l_zigzag_matrixes = (int**)realloc(l_zigzag_matrixes, (current_l_zigzag_matrix_cnt + 1)* sizeof(int*));
                     l_zigzag_matrixes[current_l_zigzag_matrix_cnt] = (int*)calloc(64, sizeof(int));
                     current_coeff = COEFF_NAME_DC;
                     current_channel_cnt++;
@@ -822,80 +888,14 @@ static int decode_data_flow(jpg_decoding_params_t *decoding_param, int*** zigzag
                         current_channel++;
                         if(current_channel > CHANNEL_Cr){
                             current_channel = CHANNEL_Y;
+                            current_channel_cnt = 0;
                         }
                     }
-                    log_str("Set channel = %d\n", current_channel);
                     uint8_t tree_id = decoding_param->sos->channels[(uint8_t)current_channel-1].huffman_table_dc_id;
                     huffman_tree_current = s_get_dht(decoding_param->huffman_trees, decoding_param->huffman_trees_cnt, 
-                                                        current_coeff, tree_id);
-                    current_node = huffman_tree_current->tree; 
-                }                                
-            } else {
-                if (current_coeff == COEFF_NAME_DC){
-                    int coeff_value = 0;
-                    for (int k = 0; k < current_node->value; k++){
-                        j--;
-                        if (j < 0){
-                            i++;
-                            j = 7;
-                            if (decoding_param->encoded_data[i] == 0x00 && decoding_param->encoded_data[i-1] == 0xFF)
-                                i++;
-                        } 
-                        coeff_value = (coeff_value << 1) | ((decoding_param->encoded_data[i] & (0x01 << j)) ? 1 : 0);
-                    }
-                    log_str("dc coeff_value = %d\n", coeff_value);
-                    l_zigzag_matrixes[current_l_zigzag_matrix_cnt][b_zigzag_pos] = (coeff_value & (1 << (current_node->value-1))) ? coeff_value : coeff_value - s_pow_2(current_node->value) + 1;
-                    b_zigzag_pos++;
-                    current_coeff = COEFF_NAME_AC;
-                    uint8_t tree_id = decoding_param->sos->channels[(uint8_t)current_channel-1].huffman_table_ac_id;
-                    huffman_tree_current = s_get_dht(decoding_param->huffman_trees, decoding_param->huffman_trees_cnt, 
-                                                        current_coeff, tree_id);
-                    current_node = huffman_tree_current->tree; 
-                } else {
-                    int coeff_value = 0;
-                    uint8_t zero_cnt = (current_node->value & 0xF0) >> 4;
-                    uint16_t coef_lng = (current_node->value & 0x0F);
-                    b_zigzag_pos += zero_cnt;
-                    if (zero_cnt) log_str("skip %d ac coeff remain zero.\n", zero_cnt);
-                    if (b_zigzag_pos <= 63){
-                        for (int k = 0; k < coef_lng; k++){
-                            j--;
-                            if (j < 0){
-                                i++;
-                                j = 7;
-                                if (decoding_param->encoded_data[i] == 0x00 && decoding_param->encoded_data[i-1] == 0xFF)
-                                    i++;
-                            }
-                            coeff_value = (coeff_value << 1) | ((decoding_param->encoded_data[i] & (0x01 << j)) ? 1 : 0);
-                        }
-                        
-                        log_str("ac coeff_value = %d, coef_lng = %u\n", coeff_value, (unsigned short)coef_lng);
-                        // if (coeff_value){
-                            l_zigzag_matrixes[current_l_zigzag_matrix_cnt][b_zigzag_pos] = coeff_value ? (coeff_value & (1 << (coef_lng-1))) ? coeff_value : coeff_value + 1 - s_pow_2(coef_lng) : 0;
-                            log_str("ac coeff_value after transforming = %d\n", l_zigzag_matrixes[current_l_zigzag_matrix_cnt][b_zigzag_pos]);
-                            b_zigzag_pos++;
-                        // }
-                    }
-                    if (b_zigzag_pos > 63){
-                        log_str("end of matrix\n");
-                        current_l_zigzag_matrix_cnt++;
-                        b_zigzag_pos = 0;
-                        l_zigzag_matrixes = (int**)realloc(l_zigzag_matrixes, (current_l_zigzag_matrix_cnt + 1)* sizeof(int*));
-                        l_zigzag_matrixes[current_l_zigzag_matrix_cnt] = (int*)calloc(64, sizeof(int));
-                        current_coeff = COEFF_NAME_DC;
-                        current_channel_cnt++;
-                        if (current_channel_cnt >= b_channels_cnt[current_channel-1]){
-                            current_channel++;
-                            if(current_channel > CHANNEL_Cr){
-                                current_channel = CHANNEL_Y;
-                            }
-                        }
-                        uint8_t tree_id = decoding_param->sos->channels[(uint8_t)current_channel-1].huffman_table_dc_id;
-                        huffman_tree_current = s_get_dht(decoding_param->huffman_trees, decoding_param->huffman_trees_cnt, 
-                                                            current_coeff, tree_id);              
-                    } 
-                    current_node = huffman_tree_current->tree;
-                }
+                                                        current_coeff, tree_id);              
+                } 
+                current_node = huffman_tree_current->tree;
             }
         }
     }
@@ -904,4 +904,8 @@ static int decode_data_flow(jpg_decoding_params_t *decoding_param, int*** zigzag
         *zigzag_matrix = l_zigzag_matrixes;
 
     return current_l_zigzag_matrix_cnt + 1;
+
+ret_error:
+    jpg_bitflow_deallocate(bf);
+    return ret_code;
 }

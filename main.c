@@ -8,11 +8,13 @@ int main(int argc, char** argv)
     //     return -1;
     // }
 
+    // printf("Trying to open file %s\n", argv[1]);
+
     FILE *output = NULL;
     // output = fopen(argv[1], "rb");
     // output = fopen("../picture_lib/test_pic/cat.jpg", "rb");
-    // output = fopen("../picture_lib/test_pic/60669610479084c8ecd776f5a2acd10c.jpg", "rb");
-    output = fopen("../picture_lib/test_pic/test.jpg", "rb");
+    // output = fopen("../test_pic/60669610479084c8ecd776f5a2acd10c.jpg", "rb");
+    output = fopen("../test_pic/test2.jpg", "rb");
     // 
     
     if (!output){

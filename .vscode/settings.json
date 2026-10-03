@@ -1,0 +1,16 @@
+{
+    "cmake.configureOnOpen": true,
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+    "cmake.generator": "Ninja",
+    "C_Cpp.intelliSenseEngine": "disabled",
+    "stm32cube-ide-clangd.enable": false,
+    "clangd.path": "${userHome}/AppData/Roaming/Code/User/globalStorage/llvm-vs-code-extensions.vscode-clangd/install/22.1.6/clangd_22.1.6/bin/clangd.exe",
+    "clangd.arguments": [
+        "--background-index",
+        "--query-driver=D:/gcc/bin/gcc.exe"
+    ],
+    "clangd.fallbackFlags": [
+        "-std=c11",
+        "-Isrc"
+    ]
+}
