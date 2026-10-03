@@ -1,0 +1,8 @@
+CompileFlags:
+  CompilationDatabase: build
+
+Index:
+  Background: Build
+
+Completion:
+  AllScopes: true
