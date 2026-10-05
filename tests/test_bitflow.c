@@ -84,6 +84,61 @@ static int test_only_stuffed_ff(void)
     return expect_logical_bytes(raw, sizeof(raw), expected, sizeof(expected));
 }
 
+static int test_eoi_is_reported_after_preceding_byte(void)
+{
+    const uint8_t raw[] = {0xA5, 0xFF, 0xD9};
+    uint8_t value = 0;
+    int bit = 7;
+    struct jpg_bitflow_t *bitflow = jpg_bitflow_allocate(raw, sizeof(raw));
+    CHECK(bitflow != NULL);
+
+    CHECK(jpg_bitflow_get_next_n_bits(bitflow, &value, 8) == JPG_BITFLOW_RET_OK);
+    CHECK(value == 0xA5);
+    CHECK(jpg_bitflow_get_next_bit(bitflow, &bit) == JPG_BITFLOW_FOUND_EOI_MARKER);
+    CHECK(bit == 7);
+
+    CHECK(jpg_bitflow_deallocate(bitflow) == JPG_BITFLOW_RET_OK);
+    return 1;
+}
+
+static int test_eoi_after_stuffed_ff(void)
+{
+    const uint8_t raw[] = {0xFF, 0x00, 0xFF, 0xD9};
+    uint8_t value = 0;
+    int bit = -1;
+    struct jpg_bitflow_t *bitflow = jpg_bitflow_allocate(raw, sizeof(raw));
+    CHECK(bitflow != NULL);
+
+    CHECK(jpg_bitflow_get_next_n_bits(bitflow, &value, 8) == JPG_BITFLOW_RET_OK);
+    CHECK(value == 0xFF);
+    CHECK(jpg_bitflow_get_next_bit(bitflow, &bit) == JPG_BITFLOW_FOUND_EOI_MARKER);
+
+    CHECK(jpg_bitflow_deallocate(bitflow) == JPG_BITFLOW_RET_OK);
+    return 1;
+}
+
+static int test_all_restart_markers_are_reported_and_skipped(void)
+{
+    for (uint8_t marker = 0xD0; marker <= 0xD7; ++marker) {
+        const uint8_t raw[] = {0xA5, 0xFF, marker, 0x5A};
+        uint8_t value = 0;
+        int bit = -1;
+        struct jpg_bitflow_t *bitflow = jpg_bitflow_allocate(raw, sizeof(raw));
+        CHECK(bitflow != NULL);
+
+        CHECK(jpg_bitflow_get_next_n_bits(bitflow, &value, 8) == JPG_BITFLOW_RET_OK);
+        CHECK(value == 0xA5);
+        CHECK(jpg_bitflow_get_next_bit(bitflow, &bit) == JPG_BITFLOW_FOUND_RST_MARKER);
+
+        value = 0;
+        CHECK(jpg_bitflow_get_next_n_bits(bitflow, &value, 8) == JPG_BITFLOW_RET_OK);
+        CHECK(value == 0x5A);
+        CHECK(jpg_bitflow_deallocate(bitflow) == JPG_BITFLOW_RET_OK);
+    }
+
+    return 1;
+}
+
 static int test_get_exactly_eight_bits(void)
 {
     uint8_t raw[] = {0xA5};
@@ -267,7 +322,7 @@ static int test_i64_rejects_invalid_arguments(void)
     return 1;
 }
 
-static int test_allocate_copies_input(void)
+static int test_allocate_borrows_input(void)
 {
     uint8_t raw[] = {0x80};
     struct jpg_bitflow_t *bitflow = jpg_bitflow_allocate(raw, sizeof(raw));
@@ -277,7 +332,7 @@ static int test_allocate_copies_input(void)
 
     int bit = -1;
     CHECK(jpg_bitflow_get_next_bit(bitflow, &bit) == JPG_BITFLOW_RET_OK);
-    CHECK(bit == 1);
+    CHECK(bit == 0);
     CHECK(jpg_bitflow_deallocate(bitflow) == JPG_BITFLOW_RET_OK);
     return 1;
 }
@@ -311,6 +366,9 @@ int main(void)
         {"FF 00 is unstuffed in the middle", test_stuffed_ff_in_middle},
         {"FF 00 is unstuffed at the end", test_stuffed_ff_at_end},
         {"a stream containing only FF 00", test_only_stuffed_ff},
+        {"EOI is reported after the preceding byte", test_eoi_is_reported_after_preceding_byte},
+        {"EOI is detected after a stuffed FF byte", test_eoi_after_stuffed_ff},
+        {"restart markers are reported and skipped", test_all_restart_markers_are_reported_and_skipped},
         {"bulk read returns exactly eight bits", test_get_exactly_eight_bits},
         {"bulk read rejects a request past the end", test_bulk_read_rejects_too_many_bits},
         {"bulk read returns multiple bytes", test_get_multiple_bytes},
@@ -323,7 +381,7 @@ int main(void)
         {"i64 read overwrites its destination", test_i64_overwrites_destination},
         {"consecutive i64 reads continue at the cursor", test_i64_consecutive_reads_continue_from_cursor},
         {"i64 read rejects invalid arguments", test_i64_rejects_invalid_arguments},
-        {"allocation copies its input", test_allocate_copies_input},
+        {"allocation borrows its input", test_allocate_borrows_input},
         {"invalid arguments are rejected", test_invalid_arguments},
     };
 
