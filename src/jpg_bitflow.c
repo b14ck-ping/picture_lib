@@ -10,7 +10,7 @@ struct jpg_bitflow_t{
     size_t curr_byte;
     size_t curr_bit;
     size_t bf_len;
-    uint8_t bf[];
+    const uint8_t* bf;
 };
 
 static jpg_bitflow_ret_code_t _next_byte(struct jpg_bitflow_t* bf)
@@ -27,27 +27,58 @@ static jpg_bitflow_ret_code_t _next_byte(struct jpg_bitflow_t* bf)
         return JPG_BITFLOW_BAD_ARG;
     }
 
-    if (bf->bf[++bf->curr_byte] == 0x00 && bf->bf[bf->curr_byte - 1] == 0xFF)
-        ++bf->curr_byte;
+    bf->curr_byte++;
+    
 
+    for(;;){
+        if(bf->curr_byte >= bf->bf_len)
+            return JPG_BITFLOW_END_OF_FLOW;
+
+        if (bf->curr_byte > 0 &&
+            bf->bf[bf->curr_byte] == 0x00 &&
+            bf->bf[bf->curr_byte - 1] == 0xFF) {
+            ++bf->curr_byte;
+            continue;
+        }
+
+        if (bf->curr_byte + 1 < bf->bf_len &&
+            bf->bf[bf->curr_byte] == 0xFF) {
+            uint8_t marker = bf->bf[bf->curr_byte + 1];
+
+            if (marker >= 0xD0 && marker <= 0xD7) {
+                ++bf->curr_byte;
+                return JPG_BITFLOW_FOUND_RST_MARKER;
+            }
+
+            if (marker == 0xD9) {
+                ++bf->curr_byte;
+                return JPG_BITFLOW_FOUND_EOI_MARKER;
+            }
+        }
+
+        break;
+    }
+    
     bf->curr_bit = 0;
+    if(bf->curr_byte >= bf->bf_len)
+        return JPG_BITFLOW_END_OF_FLOW;
 
     return JPG_BITFLOW_RET_OK;
 }
 
-struct jpg_bitflow_t* jpg_bitflow_allocate(uint8_t* flow, size_t len)
+struct jpg_bitflow_t* jpg_bitflow_allocate(const uint8_t* flow, size_t len)
 {
     if (!flow || !len)
         return NULL;
 
-    struct jpg_bitflow_t* bf = (struct jpg_bitflow_t*)malloc(sizeof(struct jpg_bitflow_t) + len);
+    struct jpg_bitflow_t* bf = (struct jpg_bitflow_t*)malloc(sizeof(struct jpg_bitflow_t));
     if(!bf)
         return NULL;
 
     bf->curr_bit = 0;
     bf->curr_byte = 0;
     bf->bf_len = len;
-    memcpy(bf->bf, flow, bf->bf_len);
+    bf->bf = flow;
 
     return bf;
 }
@@ -70,14 +101,14 @@ jpg_bitflow_ret_code_t jpg_bitflow_get_next_bit(struct jpg_bitflow_t* bf, int* p
     if (bf->curr_byte >= bf->bf_len)
         return JPG_BITFLOW_END_OF_FLOW;
 
-    *pbit = (bf->bf[bf->curr_byte] & (1 << (7 - bf->curr_bit))) >> (7 - bf->curr_bit);
-
-    if(bf->curr_bit == 7){
+    if(bf->curr_bit > 7){
         jpg_bitflow_ret_code_t ret = _next_byte(bf);
         if (ret != JPG_BITFLOW_RET_OK)
             return ret;
-    } else 
-       ++bf->curr_bit; 
+    }
+    *pbit = (bf->bf[bf->curr_byte] & (1 << (7 - bf->curr_bit))) >> (7 - bf->curr_bit);
+
+    ++bf->curr_bit; 
 
     return JPG_BITFLOW_RET_OK;
 }

@@ -1,4 +1,5 @@
-
+#ifndef PICTURE_LIB_DCT_COEFFICIENTS_H
+#define PICTURE_LIB_DCT_COEFFICIENTS_H
 
 typedef struct coeff_matrix {
     const double coeff_matrix[8][8];
@@ -719,4 +720,6 @@ const coeff_matrix_t dct_coeff_matrices[8][8] =
 {coeff_matrix_6_0, coeff_matrix_6_1, coeff_matrix_6_2, coeff_matrix_6_3, coeff_matrix_6_4, coeff_matrix_6_5, coeff_matrix_6_6, coeff_matrix_6_7},
 {coeff_matrix_7_0, coeff_matrix_7_1, coeff_matrix_7_2, coeff_matrix_7_3, coeff_matrix_7_4, coeff_matrix_7_5, coeff_matrix_7_6, coeff_matrix_7_7}
 };
+
+#endif /* PICTURE_LIB_DCT_COEFFICIENTS_H */
 

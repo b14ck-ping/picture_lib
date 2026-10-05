@@ -1,3 +1,5 @@
+#ifndef PICTURE_LIB_HUFFMAN_H
+#define PICTURE_LIB_HUFFMAN_H
 
 #include "stdlib.h"
 #include "string.h"
@@ -23,3 +25,5 @@ huffman_tree_t *huffman_tree_create(uint8_t tree_class, uint8_t id, uint8_t *cod
 void huffman_tree_dump(huffman_tree_t *tree);
 void print_binary_16bit(uint16_t value , char *out_str);
 void print_binary_8bit(uint8_t value , char *out_str);
+
+#endif /* PICTURE_LIB_HUFFMAN_H */

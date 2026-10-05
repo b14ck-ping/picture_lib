@@ -1,32 +1,9 @@
 #include "huffman.h"
+#include "log.h"
 #include <stdbool.h>
 #include <stdarg.h>
 
 static bool s_huffman_add_value(tree_node_t *cur_node, int current_depth, int target_depth, uint8_t value);
-
-static void log_str(const char* format_str, ...)
-{
-    return;
-    char buf_str[4096] = {0};
-    va_list ap;
-
-    va_start(ap, format_str);
-    vsprintf(buf_str, format_str, ap);
-    va_end(ap);
-
-    printf("%s", buf_str);
-    fflush(stdout);
-    FILE* log_file = fopen("./log.log", "a");
-    if (!log_file){
-        printf("Can't open log file.");
-        return;
-    }
-    fputs(buf_str, log_file);
-    
-    fclose(log_file);
-}
-
-
 
 huffman_tree_t *huffman_tree_create(uint8_t tree_class, uint8_t id, uint8_t *codes_cnt_array, uint8_t *values, uint8_t values_cnt)
 {
@@ -73,7 +50,7 @@ int s_searcher (tree_node_t* node, uint16_t cur_code)
     if (node->leaf_node){
         char str[17] = {};
         print_binary_16bit(cur_code , str);
-        log_str("%s = %X\n", str, node->value);
+        log_str(LOG_LEVEL_DEBUG, "%s = %X\n", str, node->value);
         return 0;
     }
     if (node->left)
@@ -85,7 +62,7 @@ int s_searcher (tree_node_t* node, uint16_t cur_code)
 
 void huffman_tree_dump(huffman_tree_t *tree)
 {
-    log_str("Huffman codes dump for tree with id=%d and class %s:\n", tree->id, tree->tree_class ? "AC" : "DC");
+    log_str(LOG_LEVEL_DEBUG, "Huffman codes dump for tree with id=%d and class %s:\n", tree->id, tree->tree_class ? "AC" : "DC");
     uint16_t l_value = 0;
     if (tree->tree->left)
         s_searcher(tree->tree->left, l_value << 1);
